@@ -1,11 +1,3 @@
-.idea
-.myenv
-.__pycache__
-*.pyc
-*.pyo
-*.so
-*.egg-info
-*.dist-info
-*.egg
-*.DS_Store
-*.swp
+/myenv
+/.idea
+/.__py

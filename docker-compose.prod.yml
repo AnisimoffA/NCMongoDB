@@ -1,0 +1,133 @@
+version: '3.8'
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - 2181:2181
+    networks:
+      - broker-kafka
+    healthcheck:
+      test: nc -z localhost 2181 || exit -1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  kafka:
+    image: obsidiandynamics/kafka
+    networks:
+      - broker-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - 9092:9092
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    healthcheck:
+      test: nc -z localhost 29092 || exit
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  kafka-ui:
+    container_name: kafka-ui
+    networks:
+      - broker-kafka
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8082:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: true
+    depends_on:
+      - kafka
+
+  redis:
+    networks:
+      - broker-kafka
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  mongo-lp:
+    networks:
+      - broker-kafka
+    image: mongo:latest
+    container_name: mongo-lp
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: myuser
+      MONGO_INITDB_ROOT_PASSWORD: mypassword
+    volumes:
+        - mongo_lp_data:/data/db
+        - ./line-provider/mongod.conf:/etc/mongo/mongod.conf
+    command: [ "mongod", "--config", "/etc/mongo/mongod.conf" ]
+
+  mongo-sm:
+    networks:
+      - broker-kafka
+    image: mongo:latest
+    container_name: mongo-sm
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: myuser
+      MONGO_INITDB_ROOT_PASSWORD: mypassword
+    volumes:
+      - mongo_sm_data:/data/db
+      - ./score-maker/mongod.conf:/etc/mongo/mongod.conf
+    command: [ "mongod", "--config", "/etc/mongo/mongod.conf" ]
+
+  line-provider:
+    networks:
+      - broker-kafka
+    build: ./line-provider
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./line-provider/.env.prod
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongo-lp:
+        condition: service_started
+    restart: always
+
+
+  score-maker:
+    networks:
+      - broker-kafka
+    build: ./score-maker
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./score-maker/.env.prod
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongo-sm:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: always
+
+networks:
+  broker-kafka:
+    driver: bridge
+
+volumes:
+  mongo_lp_data:
+  mongo_sm_data:
+  redis_data:
